@@ -14,6 +14,8 @@ import {
 } from "./create-openai-compatiable";
 import { ChatModel } from "app-types/chat";
 
+type ModelMap = Record<string, LanguageModel>;
+
 const ollama = createOllama({
   baseURL: process.env.OLLAMA_BASE_URL || "http://localhost:11434/api",
 });
@@ -60,15 +62,8 @@ const staticModels = {
     "gpt-oss-120b": groq("openai/gpt-oss-120b"),
     "qwen3-32b": groq("qwen/qwen3-32b"),
   },
-  openRouter: {
-    "gpt-oss-20b:free": openrouter("openai/gpt-oss-20b:free"),
-    "qwen3-8b:free": openrouter("qwen/qwen3-8b:free"),
-    "qwen3-14b:free": openrouter("qwen/qwen3-14b:free"),
-    "qwen3-coder:free": openrouter("qwen/qwen3-coder:free"),
-    "deepseek-r1:free": openrouter("deepseek/deepseek-r1-0528:free"),
-    "deepseek-v3:free": openrouter("deepseek/deepseek-chat-v3-0324:free"),
-    "gemini-2.0-flash-exp:free": openrouter("google/gemini-2.0-flash-exp:free"),
-  },
+  // openRouter models are dynamically loaded below; keep key present for typing
+  openRouter: {} as ModelMap,
 };
 
 const staticUnsupportedModels = new Set([
@@ -76,11 +71,6 @@ const staticUnsupportedModels = new Set([
   staticModels.ollama["gemma3:1b"],
   staticModels.ollama["gemma3:4b"],
   staticModels.ollama["gemma3:12b"],
-  staticModels.openRouter["gpt-oss-20b:free"],
-  staticModels.openRouter["qwen3-8b:free"],
-  staticModels.openRouter["qwen3-14b:free"],
-  staticModels.openRouter["deepseek-r1:free"],
-  staticModels.openRouter["gemini-2.0-flash-exp:free"],
 ]);
 
 const openaiCompatibleProviders = openaiCompatibleModelsSafeParse(
@@ -92,7 +82,74 @@ const {
   unsupportedModels: openaiCompatibleUnsupportedModels,
 } = createOpenAICompatibleModels(openaiCompatibleProviders);
 
-const allModels = { ...openaiCompatibleModels, ...staticModels };
+// Dynamic OpenRouter models: initialized with defaults, then refreshed periodically
+const OPENROUTER_MODELS_ENDPOINT =
+  (process.env.OPENROUTER_BASE_URL?.replace(/\/$/, "") ||
+    "https://openrouter.ai/api/v1") + "/models";
+
+let openRouterDynamicModels: ModelMap = {
+  "gpt-oss-20b:free": openrouter("openai/gpt-oss-20b:free"),
+  "qwen3-8b:free": openrouter("qwen/qwen3-8b:free"),
+  "qwen3-14b:free": openrouter("qwen/qwen3-14b:free"),
+  "qwen3-coder:free": openrouter("qwen/qwen3-coder:free"),
+  "deepseek-r1:free": openrouter("deepseek/deepseek-r1-0528:free"),
+  "deepseek-v3:free": openrouter("deepseek/deepseek-chat-v3-0324:free"),
+  "gemini-2.0-flash-exp:free": openrouter("google/gemini-2.0-flash-exp:free"),
+};
+
+async function refreshOpenRouterModels() {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey || apiKey === "****") return;
+
+  try {
+    const response = await fetch(OPENROUTER_MODELS_ENDPOINT, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: "application/json",
+      },
+      cache: "no-store",
+    });
+    if (!response.ok) return;
+    const data = await response.json();
+    const list = Array.isArray(data?.data)
+      ? data.data
+      : Array.isArray(data?.models)
+        ? data.models
+        : [];
+    const fresh: ModelMap = {};
+    for (const m of list) {
+      const id: string | undefined = m?.id;
+      if (!id || typeof id !== "string") continue;
+      fresh[id] = openrouter(id);
+    }
+    if (Object.keys(fresh).length > 0) {
+      openRouterDynamicModels = fresh;
+    }
+  } catch {
+    // Swallow errors; keep previous map
+  }
+}
+
+const OPENROUTER_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
+let openRouterRefreshTimer: NodeJS.Timeout | undefined;
+function startOpenRouterRefreshSchedule() {
+  if (!checkProviderAPIKey("openRouter")) return;
+  // Initial refresh at startup
+  void refreshOpenRouterModels();
+  if (!openRouterRefreshTimer) {
+    openRouterRefreshTimer = setInterval(() => {
+      void refreshOpenRouterModels();
+    }, OPENROUTER_REFRESH_INTERVAL_MS);
+  }
+}
+startOpenRouterRefreshSchedule();
+
+function getAllModels() {
+  return {
+    ...openaiCompatibleModels,
+    ...{ ...staticModels, openRouter: openRouterDynamicModels },
+  } as Record<string, ModelMap>;
+}
 
 const allUnsupportedModels = new Set([
   ...openaiCompatibleUnsupportedModels,
@@ -106,17 +163,21 @@ export const isToolCallUnsupportedModel = (model: LanguageModel) => {
 const fallbackModel = staticModels.openai["gpt-4.1"];
 
 export const customModelProvider = {
-  modelsInfo: Object.entries(allModels).map(([provider, models]) => ({
-    provider,
-    models: Object.entries(models).map(([name, model]) => ({
-      name,
-      isToolCallUnsupported: isToolCallUnsupportedModel(model),
-    })),
-    hasAPIKey: checkProviderAPIKey(provider as keyof typeof staticModels),
-  })),
+  get modelsInfo() {
+    const current = getAllModels();
+    return Object.entries(current).map(([provider, models]) => ({
+      provider,
+      models: Object.entries(models).map(([name, model]) => ({
+        name,
+        isToolCallUnsupported: isToolCallUnsupportedModel(model),
+      })),
+      hasAPIKey: checkProviderAPIKey(provider as keyof typeof staticModels),
+    }));
+  },
   getModel: (model?: ChatModel): LanguageModel => {
     if (!model) return fallbackModel;
-    return allModels[model.provider]?.[model.model] || fallbackModel;
+    const current = getAllModels();
+    return current[model.provider]?.[model.model] || fallbackModel;
   },
 };
 

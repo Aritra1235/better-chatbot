@@ -23,7 +23,10 @@ interface UserStatisticsCardProps {
 
 export function UserStatisticsCard({ stats, view }: UserStatisticsCardProps) {
   const { t, tCommon } = useProfileTranslations(view);
-  const hasActivity = stats.totalTokens > 0;
+  const hasActivity =
+    stats.totalTokens > 0 ||
+    stats.modelStats.length > 0 ||
+    stats.messageCount > 0;
 
   // Prepare pie chart data for model usage (TOP 3 only)
   const top3Models = stats.modelStats.slice(0, 3);
