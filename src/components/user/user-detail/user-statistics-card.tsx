@@ -14,9 +14,15 @@ interface UserStatisticsCardProps {
       messageCount: number;
       totalTokens: number;
       provider: string;
+      inputTokens?: number;
+      outputTokens?: number;
+      totalCostUSD?: number;
+      inputCostUSD?: number;
+      outputCostUSD?: number;
     }>;
     totalTokens: number;
     period: string;
+    totalCostUSD?: number;
   };
   view?: "admin" | "user";
 }
@@ -34,6 +40,16 @@ export function UserStatisticsCard({ stats, view }: UserStatisticsCardProps) {
     label: model.model,
     value: model.totalTokens,
   }));
+
+  // Prepare cost data
+  const costModels = stats.modelStats
+    .filter((m) => (m.totalCostUSD || 0) > 0)
+    .slice(0, 3);
+  const costPieData = costModels.map((m) => ({
+    label: m.model,
+    value: m.totalCostUSD || 0,
+  }));
+  const totalCost = stats.totalCostUSD || 0;
 
   return (
     <Card
@@ -200,6 +216,74 @@ export function UserStatisticsCard({ stats, view }: UserStatisticsCardProps) {
                       ))}
                     </div>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* Costs by Model */}
+            {(totalCost > 0 || costPieData.length > 0) && (
+              <div className="rounded-lg border bg-muted/30 p-4 space-y-4">
+                <h4 className="text-sm font-medium flex items-center gap-2">
+                  <Cpu className="h-4 w-4" /> Costs by Model
+                </h4>
+
+                <div className="grid gap-6 lg:grid-cols-2">
+                  {/* Pie Chart - TOP 3 Costs */}
+                  <div className="min-h-[300px]">
+                    <PieChart
+                      title="Top 3 Models Cost"
+                      data={costPieData}
+                      unit="USD"
+                      prefix=""
+                      jsonView={false}
+                      description="Cost by top 3 models"
+                    />
+                  </div>
+
+                  {/* Model Cost List */}
+                  <div className="space-y-2 max-h-[420px] overflow-y-auto ">
+                    <div className="pr-2 space-y-2">
+                      {stats.modelStats
+                        .filter((m) => (m.totalCostUSD || 0) > 0)
+                        .map((modelStat, index) => (
+                          <div
+                            key={`cost-${modelStat.model}`}
+                            className={`flex items-center justify-between p-3 rounded-lg border hover:bg-background/70 transition-colors ${
+                              index < 3
+                                ? "bg-primary/5 border-primary/20"
+                                : "bg-background/50"
+                            }`}
+                          >
+                            <div className="flex items-center gap-3 min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <ModelProviderIcon
+                                  provider={modelStat.provider}
+                                  className="h-4 w-4 shrink-0"
+                                />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="text-sm font-medium truncate">
+                                  {modelStat.model}
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  {`In: $${(modelStat.inputCostUSD || 0).toFixed(6)} · Out: $${(modelStat.outputCostUSD || 0).toFixed(6)}`}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="text-sm font-semibold text-right shrink-0 ml-3">
+                              {`$${(modelStat.totalCostUSD || 0).toFixed(6)}`}
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Total Cost */}
+                <div className="rounded-lg p-3">
+                  <p className="text-sm text-primary/80">
+                    {`Total cost: $${totalCost.toFixed(6)} over ${stats.modelStats.filter((m) => (m.totalCostUSD || 0) > 0).length} models`}
+                  </p>
                 </div>
               </div>
             )}

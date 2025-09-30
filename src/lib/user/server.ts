@@ -7,6 +7,7 @@ import { userRepository } from "lib/db/repository";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { customModelProvider } from "@/lib/ai/models";
+import { openRouterPricingRepository } from "lib/db/repository";
 
 // Helper function to get model provider from model name
 const getModelProvider = (modelName: string): string => {
@@ -102,20 +103,58 @@ export async function getUserStats(userId?: string): Promise<{
     messageCount: number;
     totalTokens: number;
     provider: string;
+    inputTokens?: number;
+    outputTokens?: number;
+    totalCostUSD?: number;
+    inputCostUSD?: number;
+    outputCostUSD?: number;
   }>;
   totalTokens: number;
   period: string;
+  totalCostUSD?: number;
 }> {
   const resolvedUserId = await getUserIdAndCheckAccess(userId);
   const stats = await userRepository.getUserStats(resolvedUserId);
 
-  // Add provider information to each model stat
+  // Add provider and compute costs for OpenRouter models
+  const openRouterModels = stats.modelStats
+    .filter((s: any) => getModelProvider(s.model) === "openRouter")
+    .map((s: any) => s.model);
+
+  const pricing =
+    await openRouterPricingRepository.getByModelIds(openRouterModels);
+  const priceMap = new Map(pricing.map((p) => [p.modelId, p]));
+
+  let totalCostUSD = 0;
+
+  const modelStats = stats.modelStats.map((stat: any) => {
+    const provider = getModelProvider(stat.model);
+    let inputCostUSD = 0;
+    let outputCostUSD = 0;
+    if (provider === "openRouter") {
+      const p = priceMap.get(stat.model);
+      const inputTokens = stat.inputTokens || 0;
+      const outputTokens = stat.outputTokens || 0;
+      if (p) {
+        inputCostUSD = inputTokens * p.promptPrice;
+        outputCostUSD = outputTokens * p.completionPrice;
+      }
+    }
+    const total = inputCostUSD + outputCostUSD;
+    totalCostUSD += total;
+    return {
+      ...stat,
+      provider,
+      inputCostUSD,
+      outputCostUSD,
+      totalCostUSD: total,
+    };
+  });
+
   return {
     ...stats,
-    modelStats: stats.modelStats.map((stat) => ({
-      ...stat,
-      provider: getModelProvider(stat.model),
-    })),
+    modelStats,
+    totalCostUSD,
   };
 }
 

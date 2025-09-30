@@ -35,6 +35,8 @@ export interface PieChartProps {
   description?: string;
   prefix?: string;
   jsonView?: boolean;
+  // When true, center value auto-scales font size based on length/decimals
+  dynamicCenterScale?: boolean;
 }
 
 // Color variable names (chart-1 ~ chart-5)
@@ -92,8 +94,27 @@ function formatLargeNumber(num: number | null | undefined): string {
   return `${value.toFixed(1)}${units[unitIndex]}`;
 }
 
+function limitDecimalsString(value: string, maxDecimals: number): string {
+  // If value ends with a unit suffix (k, M, B, T, etc.), leave it as is
+  const unitSuffixPattern = /[a-zA-Z]+$/;
+  if (unitSuffixPattern.test(value)) return value;
+
+  if (!value.includes(".")) return value;
+  const [intPart, decPart] = value.split(".");
+  const trimmed = decPart.slice(0, maxDecimals).replace(/0+$/g, "");
+  return trimmed.length > 0 ? `${intPart}.${trimmed}` : intPart;
+}
+
 export function PieChart(props: PieChartProps) {
-  const { title, data, unit, description, prefix, jsonView = true } = props;
+  const {
+    title,
+    data,
+    unit,
+    description,
+    prefix,
+    jsonView = true,
+    dynamicCenterScale = true,
+  } = props;
   // Calculate total value
   const total = React.useMemo(() => {
     return data.reduce((acc, curr) => acc + curr.value, 0);
@@ -168,6 +189,23 @@ export function PieChart(props: PieChartProps) {
               <Label
                 content={({ viewBox }) => {
                   if (viewBox && "cx" in viewBox && "cy" in viewBox) {
+                    // Derive center text and size based on value length/decimals
+                    const raw = formatLargeNumber(total);
+                    const display = limitDecimalsString(raw, 6);
+                    const decimals = display.includes(".")
+                      ? display.split(".")[1].length
+                      : 0;
+                    const totalLength = display.length;
+                    let sizeClass = "text-3xl";
+                    if (dynamicCenterScale) {
+                      if (decimals >= 6 || totalLength > 10)
+                        sizeClass = "text-lg";
+                      else if (decimals >= 4 || totalLength > 8)
+                        sizeClass = "text-xl";
+                      else if (decimals >= 2 || totalLength > 6)
+                        sizeClass = "text-2xl";
+                      else sizeClass = "text-3xl";
+                    }
                     return (
                       <text
                         x={viewBox.cx}
@@ -178,9 +216,9 @@ export function PieChart(props: PieChartProps) {
                         <tspan
                           x={viewBox.cx}
                           y={viewBox.cy}
-                          className="fill-foreground text-3xl font-bold"
+                          className={`fill-foreground ${sizeClass} font-bold`}
                         >
-                          {formatLargeNumber(total)}
+                          {display}
                         </tspan>
                         {unit && (
                           <tspan

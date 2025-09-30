@@ -124,10 +124,12 @@ export const pgUserRepository: UserRepository = {
 
     const modelStats = await db
       .select({
-        model: sql<string>`${ChatMessageSchema.metadata}->'chatModel'->>'model'`,
+        model: sql<string>`COALESCE(${ChatMessageSchema.metadata}->'chatModel'->>'model', '')`,
         messageCount: count(ChatMessageSchema.id),
-        // Extract usage tokens from metadata
-        totalTokens: sql<number>`COALESCE(SUM((${ChatMessageSchema.metadata}->'usage'->>'totalTokens')::numeric), 0)`,
+        // Extract usage tokens from metadata (support both OpenRouter keys and Vercel AI usage shape)
+        inputTokens: sql<number>`COALESCE(SUM((${ChatMessageSchema.metadata}->'usage'->>'prompt_tokens')::numeric), SUM((${ChatMessageSchema.metadata}->'usage'->>'inputTokens')::numeric), 0)`,
+        outputTokens: sql<number>`COALESCE(SUM((${ChatMessageSchema.metadata}->'usage'->>'completion_tokens')::numeric), SUM((${ChatMessageSchema.metadata}->'usage'->>'outputTokens')::numeric), 0)`,
+        totalTokens: sql<number>`COALESCE(SUM((${ChatMessageSchema.metadata}->'usage'->>'total_tokens')::numeric), SUM((${ChatMessageSchema.metadata}->'usage'->>'totalTokens')::numeric), 0)`,
       })
       .from(ChatMessageSchema)
       .leftJoin(
@@ -137,12 +139,13 @@ export const pgUserRepository: UserRepository = {
       .where(
         sql`${ChatThreadSchema.userId} = ${userId} 
             AND ${ChatMessageSchema.createdAt} >= ${thirtyDaysAgo}
-            AND ${ChatMessageSchema.metadata} IS NOT NULL
-            AND ${ChatMessageSchema.metadata}->'chatModel'->>'model' IS NOT NULL`,
+            AND ${ChatMessageSchema.metadata} IS NOT NULL`,
       )
-      .groupBy(sql`${ChatMessageSchema.metadata}->'chatModel'->>'model'`)
+      .groupBy(
+        sql`COALESCE(${ChatMessageSchema.metadata}->'chatModel'->>'model', '')`,
+      )
       .orderBy(
-        sql`SUM((${ChatMessageSchema.metadata}->'usage'->>'totalTokens')::numeric) DESC`,
+        sql`COALESCE(SUM((${ChatMessageSchema.metadata}->'usage'->>'total_tokens')::numeric), SUM((${ChatMessageSchema.metadata}->'usage'->>'totalTokens')::numeric), 0) DESC`,
       )
       .limit(10); // Get top 10 models by token usage
 
@@ -157,6 +160,8 @@ export const pgUserRepository: UserRepository = {
       modelStats: modelStats.map((stat) => ({
         ...stat,
         totalTokens: Number(stat.totalTokens || 0),
+        inputTokens: Number((stat as any).inputTokens || 0),
+        outputTokens: Number((stat as any).outputTokens || 0),
       })),
       totalTokens,
       period: "Last 30 Days",

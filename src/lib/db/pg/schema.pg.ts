@@ -12,6 +12,7 @@ import {
   unique,
   varchar,
   index,
+  numeric,
 } from "drizzle-orm/pg-core";
 import { isNotNull } from "drizzle-orm";
 import { DBWorkflow, DBEdge, DBNode } from "app-types/workflow";
@@ -319,6 +320,15 @@ export const McpOAuthSessionSchema = pgTable(
       .where(isNotNull(t.tokens)),
   ],
 );
+
+export const OpenRouterPricingSchema = pgTable("openrouter_pricing", {
+  modelId: text("model_id").primaryKey().notNull(),
+  promptPrice: numeric("prompt_price").notNull(),
+  completionPrice: numeric("completion_price").notNull(),
+  requestPrice: numeric("request_price"),
+  currency: text("currency").notNull().default("USD"),
+  updatedAt: timestamp("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
 
 export type McpServerEntity = typeof McpServerSchema.$inferSelect;
 export type ChatThreadEntity = typeof ChatThreadSchema.$inferSelect;

@@ -13,6 +13,7 @@ import {
   openaiCompatibleModelsSafeParse,
 } from "./create-openai-compatiable";
 import { ChatModel } from "app-types/chat";
+import { openRouterPricingRepository } from "lib/db/repository";
 
 type ModelMap = Record<string, LanguageModel>;
 
@@ -117,13 +118,34 @@ async function refreshOpenRouterModels() {
         ? data.models
         : [];
     const fresh: ModelMap = {};
+    const upserts: Array<Promise<any>> = [];
     for (const m of list) {
       const id: string | undefined = m?.id;
       if (!id || typeof id !== "string") continue;
       fresh[id] = openrouter(id);
+      const pricing = m?.pricing;
+      if (pricing && pricing.prompt && pricing.completion) {
+        const promptPrice = Number(pricing.prompt);
+        const completionPrice = Number(pricing.completion);
+        const requestPrice = pricing.request ? Number(pricing.request) : null;
+        if (!Number.isNaN(promptPrice) && !Number.isNaN(completionPrice)) {
+          upserts.push(
+            openRouterPricingRepository.upsert({
+              modelId: id,
+              promptPrice,
+              completionPrice,
+              requestPrice,
+              currency: "USD",
+            }),
+          );
+        }
+      }
     }
     if (Object.keys(fresh).length > 0) {
       openRouterDynamicModels = fresh;
+    }
+    if (upserts.length) {
+      await Promise.allSettled(upserts);
     }
   } catch {
     // Swallow errors; keep previous map
